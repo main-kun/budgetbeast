@@ -94,3 +94,4 @@ fabric.properties
 .env
 
 config/sa_key.json
+config/*.yaml

@@ -3,32 +3,70 @@ use std::sync::Arc;
 use google_sheets4::Sheets;
 use teloxide::{prelude::*, utils::command::BotCommands};
 use serde_json::json;
+use serde::Deserialize;
 use crate::sheets::{append_row, create_sheets_client, SheetsClient};
 
 pub mod sheets;
 
+
+#[derive(Debug, Deserialize)]
+struct Settings {
+    spreadsheet: SpreadsheetSettings,
+    service_account_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SpreadsheetSettings {
+    id: String,
+    sheet_name: String
+}
+
+struct BotState {
+    sheets: Sheets<SheetsClient>,
+    settings: Settings
+}
+
 #[tokio::main]
 async fn main() {
-    dotenvy::dotenv().expect("Could not load .env");
-    pretty_env_logger::init();
-
-    let client_path = env::var("SERVICE_ACCOUNT_KEY")
-        .expect("env variable \"SERVICE_ACCOUNT_KEY\" was not found");
     log::info!("Starting budgetbeast");
 
-    let sheets = match create_sheets_client(&client_path).await {
-        Ok(client) => Arc::new(client),
+    dotenvy::dotenv().expect("Could not load .env");
+    pretty_env_logger::init();
+    
+    let exec_path = std::env::current_exe().expect("Could not get execution directory");
+    let exec_dir = exec_path.parent().unwrap();
+    let config_path = exec_dir.join("config.yaml");
+    
+    let settings = match config::Config::builder()
+        .add_source(config::File::with_name(config_path.to_str().unwrap()))
+        .build()
+        .and_then(|c| c.try_deserialize::<Settings>()) { 
+        Ok(settings) => settings,
+        Err(e) => {
+            eprintln!("Failed to load bot settings: {}", e);
+            std::process::exit(1)
+        }
+    };
+    
+    let sheets = match create_sheets_client(&settings.service_account_key).await {
+        Ok(client) => client,
         Err(e) => {
             eprintln!("Failed to create sheets client: {}", e);
             std::process::exit(1);
         }
     };
+    
+    let state = Arc::new(BotState {
+        sheets,
+        settings
+    });
+    
     let bot = Bot::from_env();
     
-    let sheets_clone = Arc::clone(&sheets);
+    let state_clone = Arc::clone(&state);
     Command::repl(
         bot, 
-        move |bot, msg, cmd| answer(bot, msg, cmd, Arc::clone(&sheets_clone)
+        move |bot, msg, cmd| answer(bot, msg, cmd, Arc::clone(&state_clone)
     )
     ).await;
 }
@@ -40,26 +78,24 @@ enum Command {
     Add,
 }
 
-async fn answer(bot: Bot, msg: Message, cmd: Command, sheets: Arc<Sheets<SheetsClient>>) -> ResponseResult<()> {
+async fn answer(bot: Bot, msg: Message, cmd: Command, bot_state: Arc<BotState>) -> ResponseResult<()> {
     match cmd {
-        Command::Add => add_command(bot, msg, &sheets).await?,
+        Command::Add => add_command(bot, msg, &bot_state).await?,
     };
     Ok(())
 }
 
-async fn add_command(bot: Bot, msg: Message, sheets: &Sheets<SheetsClient>) -> ResponseResult<()> {
+async fn add_command(bot: Bot, msg: Message, bot_state: &BotState) -> ResponseResult<()> {
     let username = msg
         .from
         .and_then(|user| user.username)
         .unwrap_or("unknown".to_string());
 
     log::info!("Received :add command call from user {}", username);
-    let spreadsheet_id = env::var("SPREADSHEET_ID")
-        .expect("Expected SPREADSHEET_ID env var");
     append_row(
-        sheets,
-        &spreadsheet_id,
-        "Sheet1",
+        &bot_state.sheets,
+        &bot_state.settings.spreadsheet.id,
+        &bot_state.settings.spreadsheet.sheet_name,
         vec![
             vec![
                 json!("2024-12-13"),
