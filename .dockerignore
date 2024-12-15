@@ -1,0 +1,3 @@
+config/sa_key.json
+config/*.yaml
+.env

@@ -1,4 +1,3 @@
-use std::env;
 use std::sync::Arc;
 use google_sheets4::Sheets;
 use teloxide::{prelude::*, utils::command::BotCommands};
