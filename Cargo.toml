@@ -2,14 +2,15 @@
 name = "budgetbeast"
 version = "0.1.0"
 edition = "2021"
+description = "A telegram bot for personal budget tracking"
+publish = false
 
 [dependencies]
 teloxide = { version = "0.13", features = ["macros"] }
 log = "0.4"
 pretty_env_logger = "0.5"
 tokio = { version =  "1.8", features = ["rt-multi-thread", "macros"] }
-dotenvy = "0.15.7"
-google-sheets4 = "6.0.0+20240621"
+google-sheets4 = "6.0.0"
 serde = {version = "1.0.216", features = ["derive"]}
 serde_json = "1.0.133"
 yup-oauth2 = "11.0.0"
