@@ -7,11 +7,12 @@ use crate::sheets::{append_row, create_sheets_client, SheetsClient};
 
 pub mod sheets;
 
-
+const CONFIG_NAME: &str = "config.yaml";
 #[derive(Debug, Deserialize)]
 struct Settings {
     spreadsheet: SpreadsheetSettings,
     service_account_key: String,
+    bot_token: String
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,14 +28,10 @@ struct BotState {
 
 #[tokio::main]
 async fn main() {
-    log::info!("Starting budgetbeast");
-
-    dotenvy::dotenv().expect("Could not load .env");
     pretty_env_logger::init();
-    
     let exec_path = std::env::current_exe().expect("Could not get execution directory");
     let exec_dir = exec_path.parent().unwrap();
-    let config_path = exec_dir.join("config.yaml");
+    let config_path = exec_dir.join(CONFIG_NAME);
     
     let settings = match config::Config::builder()
         .add_source(config::File::with_name(config_path.to_str().unwrap()))
@@ -46,7 +43,9 @@ async fn main() {
             std::process::exit(1)
         }
     };
-    
+
+    let bot = Bot::new(&settings.bot_token);
+
     let sheets = match create_sheets_client(&settings.service_account_key).await {
         Ok(client) => client,
         Err(e) => {
@@ -59,9 +58,9 @@ async fn main() {
         sheets,
         settings
     });
-    
-    let bot = Bot::from_env();
-    
+
+    log::info!("Budgetbeast initialized");
+
     let state_clone = Arc::clone(&state);
     Command::repl(
         bot, 
