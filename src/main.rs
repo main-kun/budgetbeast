@@ -177,7 +177,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
         
         let utc = Utc::now();
 
-        match append_row(
+       match append_row(
             &bot_state.sheets,
             &bot_state.settings.spreadsheet.id,
             &bot_state.settings.spreadsheet.sheet_name,
@@ -189,25 +189,23 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
                 ]
             ]
         ).await {
-            Ok(_) => {
-                let success_text = format!(
-                    "✅ *Added transaction:*\n*Category:* {}\n*Amount:* {}\n",
-                    category,
-                    amount.to_string().replace(".", r"\.")
-                );
-                edit_bot_message(&bot, &q, success_text).await?;
-            }
-
-            Err(_) => {
+           Ok(_) => {
+               let success_text = format!(
+                   "✅ *Added transaction:*\n*Category:* {}\n*Amount:* {}\n",
+                   category,
+                   amount.to_string().replace(".", r"\.")
+               );
+               edit_bot_message(&bot, &q, success_text).await?;
+           }
+           Err(_) => {
                edit_bot_message(
-                    &bot,
-                    &q,
-                    String::from("⛔ Could not save the transaction")
-                ).await?;
-                return Ok(())
-
-            }
-        };
+                   &bot,
+                   &q,
+                   String::from("⛔ Could not save the transaction")
+               ).await?;
+               return Ok(())
+           }
+       };
 
         log::info!(
             "Transaction saved. Amount: {}; Category: {}; From: {}",

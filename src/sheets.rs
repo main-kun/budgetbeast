@@ -3,6 +3,7 @@ use google_sheets4::api::ValueRange;
 use std::error::Error;
 use serde_json::{Value};
 use yup_oauth2::{read_service_account_key, ServiceAccountAuthenticator};
+use anyhow::Result;
 
 pub type SheetsClient = hyper_rustls::HttpsConnector<
     hyper_util::client::legacy::connect::HttpConnector
@@ -33,7 +34,7 @@ pub async fn append_row(
     spreadsheet_id: &str,
     range: &str,
     rows: Vec<Vec<Value>>
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let values = ValueRange {
         range: Some(range.to_string()),
         major_dimension: Some("ROWS".to_string()),
