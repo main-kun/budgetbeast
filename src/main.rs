@@ -8,6 +8,8 @@ use crate::sheets::{append_row, create_sheets_client, SheetsClient};
 use anyhow::Result;
 use chrono::Utc;
 use serde_json::json;
+use sqlx::{Pool, Sqlite};
+use sqlx::sqlite::SqlitePool;
 
 pub mod sheets;
 
@@ -16,7 +18,8 @@ const CONFIG_NAME: &str = "config.yaml";
 struct Settings {
     spreadsheet: SpreadsheetSettings,
     service_account_key: String,
-    bot_token: String
+    bot_token: String,
+    sqlite_path: String
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,7 +30,8 @@ struct SpreadsheetSettings {
 
 struct BotState {
     sheets: Sheets<SheetsClient>,
-    settings: Settings
+    settings: Settings,
+    sqlite_pool: Pool<Sqlite>
 }
 
 #[derive(BotCommands, Clone)]
@@ -66,9 +70,18 @@ async fn main() {
         }
     };
     
+    let sqlite_pool = match SqlitePool::connect(&settings.sqlite_path).await {
+        Ok(pool) => pool,
+        Err(e) => {
+            eprintln!("Failed to create sqlite client: {}", e);
+            std::process::exit(1);
+        }
+    };
+    
     let state = Arc::new(BotState {
         sheets,
-        settings
+        settings,
+        sqlite_pool
     });
 
     log::info!("Budgetbeast initialized");

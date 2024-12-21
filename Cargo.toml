@@ -17,3 +17,4 @@ yup-oauth2 = "11.0.0"
 config = "0.14.1"
 anyhow = "1.0.94"
 chrono = "0.4.39"
+sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio"] }
