@@ -4,6 +4,7 @@ services:
     volumes:
       - ./config/docker.yaml:/app/config.yaml
       - ./config/sa_key.json:/app/sa_key.json
+      - ./data.db:/app/data.db
     ports:
       - "3333:3333"
     environment:

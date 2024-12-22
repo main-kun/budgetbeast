@@ -95,3 +95,4 @@ fabric.properties
 
 config/sa_key.json
 config/*.yaml
+data.db
