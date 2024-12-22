@@ -1,4 +1,4 @@
-use crate::db::{add_transaction, Transaction};
+use crate::db::{add_transaction, get_unsynced, Transaction};
 use crate::sheets::{append_row, create_sheets_client, SheetsClient};
 use anyhow::Result;
 use chrono::Utc;
@@ -104,6 +104,28 @@ async fn main() {
         .build()
         .dispatch()
         .await;
+}
+
+async fn handle_sync_message(bot_state: Arc<BotState>) -> Result<()> {
+    let unsynced_rows = get_unsynced(&bot_state.sqlite_pool).await?;
+    let new_rows = unsynced_rows
+        .iter()
+        .map(move |row| {
+            vec![
+                json!(row.date_created),
+                json!(row.category),
+                json!(row.amount),
+                json!(row.username),
+            ]
+        })
+        .collect::<Vec<Vec<serde_json::Value>>>();
+    append_row(
+        &bot_state.sheets,
+        &bot_state.settings.spreadsheet.id,
+        &bot_state.settings.spreadsheet.sheet_name,
+        new_rows,
+    )
+    .await
 }
 
 async fn answer(bot: Bot, msg: Message, me: Me) -> Result<()> {
