@@ -141,7 +141,7 @@ async fn push_to_sheets(bot_state: Arc<BotState>) -> Result<()> {
             vec![
                 json!(row.date_created),
                 json!(row.category),
-                json!(row.amount),
+                json!(cents_to_full(row.amount)),
                 json!(row.username),
                 json!(row.note.clone().unwrap_or_default()),
             ]
@@ -160,6 +160,10 @@ async fn push_to_sheets(bot_state: Arc<BotState>) -> Result<()> {
     Ok(())
 }
 
+fn cents_to_full(cents: i64) -> f64 {
+    (cents as f64) / 100.0
+}
+
 async fn handle_sync_message(bot_state: Arc<BotState>) -> Result<()> {
     Retry::spawn(
         ExponentialBackoff::from_millis(100).map(jitter).take(5),
@@ -173,14 +177,14 @@ async fn handle_sync_message(bot_state: Arc<BotState>) -> Result<()> {
 async fn answer(bot: Bot, msg: Message, me: Me) -> Result<()> {
     if let Some(text) = msg.text() {
         match BotCommands::parse(text, me.username()) {
-            Ok(BotCommand::Add(amount)) => {
-                add_command(bot, msg, amount).await?;
+            Ok(BotCommand::Add(command_value)) => {
+                add_command(bot, msg.clone(), command_value).await?;
             }
             Err(_) => {
-                let normalized = text.replace(",", ".");
-                match normalized.parse::<f64>() {
-                    Ok(amount) => {
-                        add_command(bot.clone(), msg.clone(), amount.to_string()).await?;
+                let tokens: Vec<&str> = text.split_whitespace().collect();
+                match tokens[0].parse::<f64>() {
+                    Ok(_) => {
+                        add_command(bot.clone(), msg.clone(), text.to_string()).await?;
                     }
                     Err(_) => {
                         bot.send_message(msg.chat.id, "Unknown command").await?;
@@ -269,8 +273,8 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
 
         let category = parts[1].to_string();
 
-        let amount = match parts[2].parse::<f32>() {
-            Ok(num) => (num * 100.0).round() as i32,
+        let amount_cents = match parts[2].parse::<f32>() {
+            Ok(num) => (num * 100.0).round() as i64,
             Err(_) => {
                 edit_bot_message(&bot, &q, String::from("⛔ Could not parse amount")).await?;
                 return Ok(());
@@ -290,7 +294,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
             &bot_state.sqlite_pool,
             Transaction {
                 date: utc.to_string(),
-                amount,
+                amount: amount_cents,
                 category: category.clone(),
                 username: username.clone(),
                 note: note.clone(),
@@ -302,7 +306,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
                 let success_text = format!(
                     "✅ *Added transaction:*\n*Category:* {}\n*Amount:* {}\n",
                     category,
-                    escape_markdown(amount.to_string())
+                    escape_markdown(cents_to_full(amount_cents).to_string())
                 );
                 edit_bot_message(&bot, &q, success_text).await?;
 
@@ -319,7 +323,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
 
         log::info!(
             "Transaction saved. Amount: {}; Category: {}; From: {}; Note: {:?}",
-            amount,
+            cents_to_full(amount_cents).to_string(),
             category,
             username,
             note

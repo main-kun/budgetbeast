@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 pub struct Transaction {
     pub date: String,
-    pub amount: i32,
+    pub amount: i64,
     pub category: String,
     pub username: String,
     pub note: Option<String>,
