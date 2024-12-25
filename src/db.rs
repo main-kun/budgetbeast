@@ -1,21 +1,23 @@
 use anyhow::Result;
-use serde_json::error::Category;
-use sqlx::{Acquire, SqlitePool};
+use chrono::{DateTime, Utc};
+use sqlx::SqlitePool;
 
 pub struct Transaction {
     pub date: String,
     pub amount: i32,
     pub category: String,
     pub username: String,
+    pub note: Option<String>,
 }
 
 pub struct Record {
-    pub date_created: String,
     pub id: i64,
+    pub date_created: String,
     pub amount: i64,
     pub category: String,
     pub username: String,
     pub synced_at: Option<String>,
+    pub note: Option<String>,
 }
 
 pub async fn add_transaction(pool: &SqlitePool, transaction: Transaction) -> Result<()> {
@@ -23,13 +25,14 @@ pub async fn add_transaction(pool: &SqlitePool, transaction: Transaction) -> Res
 
     sqlx::query!(
         r#"
-        INSERT INTO transactions (date_created, category, amount, username)
-        VALUES ( ?1, ?2, ?3, ?4)
+        INSERT INTO transactions (date_created, category, amount, username, note)
+        VALUES ( ?1, ?2, ?3, ?4, ?5)
         "#,
         transaction.date,
         transaction.category,
         transaction.amount,
-        transaction.username
+        transaction.username,
+        transaction.note
     )
     .execute(&mut *conn)
     .await?;
@@ -40,9 +43,42 @@ pub async fn get_unsynced(pool: &SqlitePool) -> Result<Vec<Record>, sqlx::Error>
     sqlx::query_as!(
         Record,
         r#"
-        SELECT * FROM transactions WHERE synced_at IS NULL
+        SELECT
+            id,
+            date_created,
+            category,
+            amount,
+            username,
+            synced_at,
+            note
+        FROM transactions WHERE synced_at IS NULL
         "#
     )
     .fetch_all(pool)
     .await
+}
+
+pub async fn update_synced_at(
+    pool: &SqlitePool,
+    time: DateTime<Utc>,
+    ids: Vec<i64>,
+) -> Result<(), sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let query = format!(
+        "UPDATE transactions SET synced_at = ? WHERE id IN ({}) AND synced_at IS NULL",
+        placeholders
+    );
+
+    let mut query_with_args = sqlx::query(&query).bind(time.to_string());
+
+    for id in ids {
+        query_with_args = query_with_args.bind(id);
+    }
+
+    query_with_args.execute(pool).await?;
+
+    Ok(())
 }

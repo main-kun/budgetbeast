@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id,\n            date_created,\n            category,\n            amount,\n            username,\n            synced_at,\n            note\n        FROM transactions WHERE synced_at IS NULL\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "date_created",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "category",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "amount",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "username",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "synced_at",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "note",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "39b263dac76ed6ec3f3506c86f87257da869c5f53c798f9e37c69b50883166e5"
+}

@@ -1,4 +1,5 @@
-use crate::db::{add_transaction, get_unsynced, Transaction};
+use crate::db::{add_transaction, get_unsynced, update_synced_at, Transaction};
+use crate::md::escape_markdown;
 use crate::sheets::{append_row, create_sheets_client, SheetsClient};
 use anyhow::Result;
 use chrono::Utc;
@@ -11,8 +12,11 @@ use teloxide::dispatching::Dispatcher;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, Me};
 use teloxide::{prelude::*, utils::command::BotCommands};
 use tokio::sync::mpsc;
+use tokio_retry::strategy::{jitter, ExponentialBackoff};
+use tokio_retry::Retry;
 
 mod db;
+mod md;
 mod sheets;
 
 const CONFIG_NAME: &str = "config.yaml";
@@ -34,6 +38,7 @@ struct BotState {
     sheets: Sheets<SheetsClient>,
     settings: Settings,
     sqlite_pool: SqlitePool,
+    tx: mpsc::Sender<ChannelCommand>,
 }
 
 #[derive(BotCommands, Clone)]
@@ -90,6 +95,21 @@ async fn main() {
         sheets,
         settings,
         sqlite_pool,
+        tx,
+    });
+
+    let state_for_channel = state.clone();
+
+    tokio::spawn(async move {
+        while let Some(cmd) = rx.recv().await {
+            match cmd {
+                ChannelCommand::Sync => {
+                    if let Err(e) = handle_sync_message(state_for_channel.clone()).await {
+                        log::error!("Failed to sync transaction: {}", e);
+                    }
+                }
+            }
+        }
     });
 
     log::info!("Budgetbeast initialized");
@@ -106,8 +126,15 @@ async fn main() {
         .await;
 }
 
-async fn handle_sync_message(bot_state: Arc<BotState>) -> Result<()> {
+async fn push_to_sheets(bot_state: Arc<BotState>) -> Result<()> {
     let unsynced_rows = get_unsynced(&bot_state.sqlite_pool).await?;
+
+    if unsynced_rows.is_empty() {
+        log::debug!("No unsynced rows to push");
+        return Ok(());
+    }
+
+    let ids: Vec<i64> = unsynced_rows.iter().map(|r| r.id).collect();
     let new_rows = unsynced_rows
         .iter()
         .map(move |row| {
@@ -116,6 +143,7 @@ async fn handle_sync_message(bot_state: Arc<BotState>) -> Result<()> {
                 json!(row.category),
                 json!(row.amount),
                 json!(row.username),
+                json!(row.note.clone().unwrap_or_default()),
             ]
         })
         .collect::<Vec<Vec<serde_json::Value>>>();
@@ -125,7 +153,21 @@ async fn handle_sync_message(bot_state: Arc<BotState>) -> Result<()> {
         &bot_state.settings.spreadsheet.sheet_name,
         new_rows,
     )
-    .await
+    .await?;
+
+    let now = Utc::now();
+    update_synced_at(&bot_state.sqlite_pool, now, ids).await?;
+    Ok(())
+}
+
+async fn handle_sync_message(bot_state: Arc<BotState>) -> Result<()> {
+    Retry::spawn(
+        ExponentialBackoff::from_millis(100).map(jitter).take(5),
+        || async { push_to_sheets(bot_state.clone()).await },
+    )
+    .await?;
+
+    Ok(())
 }
 
 async fn answer(bot: Bot, msg: Message, me: Me) -> Result<()> {
@@ -150,22 +192,39 @@ async fn answer(bot: Bot, msg: Message, me: Me) -> Result<()> {
     Ok(())
 }
 
-async fn add_command(bot: Bot, msg: Message, amount: String) -> Result<()> {
+async fn add_command(bot: Bot, msg: Message, args: String) -> Result<()> {
     let username = msg
         .from
         .as_ref()
         .and_then(|user| user.username.clone())
         .unwrap_or("unknown".to_string());
 
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    if tokens.is_empty() {
+        bot.send_message(msg.chat.id, "Invalid message").await?;
+        return Ok(());
+    }
+    let amount_str = tokens[0];
+
+    let note = if tokens.len() > 1 {
+        Some(tokens[1..].join(" "))
+    } else {
+        None
+    };
     log::info!("Received :add command call from user {}", username);
-    if let Ok(amount) = amount.parse::<f64>() {
-        send_category_menu(&bot, &msg, amount).await?
+    if let Ok(amount) = amount_str.replace(",", ".").parse::<f64>() {
+        send_category_menu(&bot, &msg, amount, note).await?
     } else {
         bot.send_message(msg.chat.id, "Invalid amount").await?;
     }
     Ok(())
 }
-async fn send_category_menu(bot: &Bot, msg: &Message, amount: f64) -> Result<()> {
+async fn send_category_menu(
+    bot: &Bot,
+    msg: &Message,
+    amount: f64,
+    note: Option<String>,
+) -> Result<()> {
     let categories = [
         "Groceries",
         "Delivery",
@@ -180,10 +239,9 @@ async fn send_category_menu(bot: &Bot, msg: &Message, amount: f64) -> Result<()>
             chunk
                 .iter()
                 .map(|category| {
-                    InlineKeyboardButton::callback(
-                        category.to_string(),
-                        format!("category:{}:{}", category, amount),
-                    )
+                    let note_str = note.clone().unwrap_or_default();
+                    let callback_data = format!("category:{}:{}:{}", category, amount, note_str);
+                    InlineKeyboardButton::callback(category.to_string(), callback_data)
                 })
                 .collect::<Vec<InlineKeyboardButton>>()
         })
@@ -198,24 +256,31 @@ async fn send_category_menu(bot: &Bot, msg: &Message, amount: f64) -> Result<()>
 }
 
 async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) -> Result<()> {
-    if let Some(ref category) = q.data {
+    if let Some(ref callback_data) = q.data {
         bot.answer_callback_query(&q.id).await?;
-        log::debug!("Query data: {}", category);
+        log::debug!("Query data: {}", callback_data);
 
-        let parts: Vec<&str> = category.split(":").collect();
+        let parts: Vec<&str> = callback_data.split(":").collect();
 
-        if parts.len() != 3 || parts[0] != "category" {
+        if parts.len() < 3 || parts[0] != "category" {
             edit_bot_message(&bot, &q, String::from("⛔ Could not parse the response")).await?;
+            return Ok(());
         }
 
         let category = parts[1].to_string();
 
         let amount = match parts[2].parse::<f32>() {
-            Ok(num) => ((num * 100.0).round() as i32),
+            Ok(num) => (num * 100.0).round() as i32,
             Err(_) => {
                 edit_bot_message(&bot, &q, String::from("⛔ Could not parse amount")).await?;
                 return Ok(());
             }
+        };
+
+        let note = if parts.len() > 3 {
+            Some(parts[3..].join(":"))
+        } else {
+            None
         };
 
         let username = q.from.username.clone().unwrap_or("unknown".into());
@@ -228,6 +293,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
                 amount,
                 category: category.clone(),
                 username: username.clone(),
+                note: note.clone(),
             },
         )
         .await
@@ -236,9 +302,13 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
                 let success_text = format!(
                     "✅ *Added transaction:*\n*Category:* {}\n*Amount:* {}\n",
                     category,
-                    amount.to_string().replace(".", r"\.")
+                    escape_markdown(amount.to_string())
                 );
                 edit_bot_message(&bot, &q, success_text).await?;
+
+                if let Err(e) = bot_state.tx.send(ChannelCommand::Sync).await {
+                    log::error!("Failed to send sync command: {}", e);
+                }
             }
             Err(_) => {
                 edit_bot_message(&bot, &q, String::from("⛔ Could not save the transaction"))
@@ -248,10 +318,11 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
         };
 
         log::info!(
-            "Transaction saved. Amount: {}; Category: {}; From: {}",
+            "Transaction saved. Amount: {}; Category: {}; From: {}; Note: {:?}",
             amount,
             category,
-            username
+            username,
+            note
         );
     }
 
