@@ -1,8 +1,9 @@
 use crate::db::{add_transaction, get_unsynced, update_synced_at, Transaction};
 use crate::md::escape_markdown;
 use crate::sheets::{append_row, create_sheets_client, SheetsClient};
-use anyhow::Result;
-use chrono::Utc;
+use anyhow::{anyhow, Result};
+use chrono::format::Item::Error;
+use chrono::{DateTime, ParseError, Utc};
 use google_sheets4::Sheets;
 use serde::Deserialize;
 use serde_json::json;
@@ -137,14 +138,21 @@ async fn push_to_sheets(bot_state: Arc<BotState>) -> Result<()> {
     let ids: Vec<i64> = unsynced_rows.iter().map(|r| r.id).collect();
     let new_rows = unsynced_rows
         .iter()
-        .map(move |row| {
-            vec![
-                json!(row.date_created),
-                json!(row.category),
-                json!(cents_to_full(row.amount)),
-                json!(row.username),
-                json!(row.note.clone().unwrap_or_default()),
-            ]
+        .filter_map(|row| match row.date_created.parse::<DateTime<Utc>>() {
+            Ok(parsed_date) => {
+                let formatted_date = parsed_date.format("%Y-%m-$d %H:%M:%S").to_string();
+                Some(vec![
+                    json!(formatted_date),
+                    json!(row.category),
+                    json!(cents_to_full(row.amount)),
+                    json!(row.note.clone().unwrap_or_default()),
+                    json!(row.username),
+                ])
+            }
+            Err(_) => {
+                log::error!("Failed to parse date {}", row.date_created);
+                None
+            }
         })
         .collect::<Vec<Vec<serde_json::Value>>>();
     append_row(
