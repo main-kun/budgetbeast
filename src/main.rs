@@ -140,7 +140,7 @@ async fn push_to_sheets(bot_state: Arc<BotState>) -> Result<()> {
         .iter()
         .filter_map(|row| match row.date_created.parse::<DateTime<Utc>>() {
             Ok(parsed_date) => {
-                let formatted_date = parsed_date.format("%Y-%m-$d %H:%M:%S").to_string();
+                let formatted_date = parsed_date.format("%Y-%m-%d %H:%M:%S").to_string();
                 Some(vec![
                     json!(formatted_date),
                     json!(row.category),
