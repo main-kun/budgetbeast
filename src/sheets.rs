@@ -42,7 +42,7 @@ pub async fn append_row(
     sheets
         .spreadsheets()
         .values_append(values, spreadsheet_id, range)
-        .value_input_option("RAW")
+        .value_input_option("USER_ENTERED")
         .insert_data_option("INSERT_ROWS")
         .doit()
         .await?;
