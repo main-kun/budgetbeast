@@ -7,13 +7,15 @@ use google_sheets4::Sheets;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::sqlite::SqlitePool;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use teloxide::dispatching::Dispatcher;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, Me};
-use teloxide::{prelude::*, utils::command::BotCommands};
+use teloxide::{prelude::*, update_listeners::webhooks, utils::command::BotCommands};
 use tokio::sync::mpsc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
+use url::Url;
 
 mod db;
 mod md;
@@ -26,6 +28,7 @@ struct Settings {
     service_account_key: String,
     bot_token: String,
     sqlite_path: String,
+    webhook_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,12 +121,27 @@ async fn main() {
         .branch(Update::filter_message().endpoint(answer))
         .branch(Update::filter_callback_query().endpoint(callback_handler));
 
-    Dispatcher::builder(bot, handler)
+    let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
         .dependencies(dptree::deps![state.clone()])
         .enable_ctrlc_handler()
-        .build()
-        .dispatch()
-        .await;
+        .build();
+
+    match &state.settings.webhook_url {
+        Some(url) => {
+            let addr: SocketAddr = ([0, 0, 0, 0], 3333).into();
+            let webhook_url: Url = url.parse().expect("Invalid url");
+            let listener = webhooks::axum(bot, webhooks::Options::new(addr, webhook_url.clone()))
+                .await
+                .expect("Couldn't setup webhook");
+            dispatcher
+                .dispatch_with_listener(
+                    listener,
+                    LoggingErrorHandler::with_custom_text("An error from the update listener"),
+                )
+                .await
+        }
+        None => dispatcher.dispatch().await,
+    }
 }
 
 async fn push_to_sheets(bot_state: Arc<BotState>) -> Result<()> {
