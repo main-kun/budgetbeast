@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::db::{add_transaction, get_unsynced, update_synced_at, Transaction};
 use crate::md::escape_markdown;
 use crate::sheets::{append_row, create_sheets_client, SheetsClient};
@@ -8,14 +9,16 @@ use serde::Deserialize;
 use serde_json::json;
 use sqlx::sqlite::SqlitePool;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc};
 use teloxide::dispatching::Dispatcher;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, Me};
 use teloxide::{prelude::*, update_listeners::webhooks, utils::command::BotCommands};
 use tokio::sync::mpsc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
+use tokio::sync::Mutex;
 use url::Url;
+use uuid::Uuid;
 
 mod db;
 mod md;
@@ -37,11 +40,21 @@ struct SpreadsheetSettings {
     sheet_name: String,
 }
 
+#[derive(Clone)]
+struct CategoryCallback {
+    category: String,
+    amount: f64,
+    note: String,
+    menu_id: Uuid
+}
+
 struct BotState {
     sheets: Sheets<SheetsClient>,
     settings: Settings,
     sqlite_pool: SqlitePool,
     tx: mpsc::Sender<ChannelCommand>,
+    categories_hash: Mutex<HashMap<String, CategoryCallback>>,
+
 }
 
 #[derive(BotCommands, Clone)]
@@ -99,6 +112,7 @@ async fn main() {
         settings,
         sqlite_pool,
         tx,
+        categories_hash: Mutex::new(HashMap::new()),
     });
 
     let state_for_channel = state.clone();
@@ -199,17 +213,17 @@ async fn handle_sync_message(bot_state: Arc<BotState>) -> Result<()> {
     Ok(())
 }
 
-async fn answer(bot: Bot, msg: Message, me: Me) -> Result<()> {
+async fn answer(bot: Bot, msg: Message, me: Me, bot_state: Arc<BotState>) -> Result<()> {
     if let Some(text) = msg.text() {
         match BotCommands::parse(text, me.username()) {
             Ok(BotCommand::Add(command_value)) => {
-                add_command(bot, msg.clone(), command_value).await?;
+                add_command(bot, msg.clone(), command_value, bot_state).await?;
             }
             Err(_) => {
                 let tokens: Vec<&str> = text.split_whitespace().collect();
                 match tokens[0].parse::<f64>() {
                     Ok(_) => {
-                        add_command(bot.clone(), msg.clone(), text.to_string()).await?;
+                        add_command(bot.clone(), msg.clone(), text.to_string(), bot_state).await?;
                     }
                     Err(_) => {
                         bot.send_message(msg.chat.id, "Unknown command").await?;
@@ -221,7 +235,7 @@ async fn answer(bot: Bot, msg: Message, me: Me) -> Result<()> {
     Ok(())
 }
 
-async fn add_command(bot: Bot, msg: Message, args: String) -> Result<()> {
+async fn add_command(bot: Bot, msg: Message, args: String, bot_state: Arc<BotState>) -> Result<()> {
     let username = msg
         .from
         .as_ref()
@@ -242,7 +256,7 @@ async fn add_command(bot: Bot, msg: Message, args: String) -> Result<()> {
     };
     log::info!("Received :add command call from user {}", username);
     if let Ok(amount) = amount_str.replace(",", ".").parse::<f64>() {
-        send_category_menu(&bot, &msg, amount, note).await?
+        send_category_menu(&bot, &msg, amount, note, bot_state).await?
     } else {
         bot.send_message(msg.chat.id, "Invalid amount").await?;
     }
@@ -253,6 +267,7 @@ async fn send_category_menu(
     msg: &Message,
     amount: f64,
     note: Option<String>,
+    bot_state: Arc<BotState>
 ) -> Result<()> {
     let categories = [
         "Groceries",
@@ -262,19 +277,38 @@ async fn send_category_menu(
         "Transport",
         "Other",
     ];
-    let keyboard = categories
+    let mut map = bot_state.categories_hash.lock().await;
+    let note_str = note.clone().unwrap_or_default();
+    let menu_id = Uuid::new_v4();
+    let category_tuples: Vec<(String, CategoryCallback)> = categories.iter().map(|&category| {
+        (
+            Uuid::new_v4().to_string(),
+            CategoryCallback {
+                menu_id,
+                amount,
+                category: category.to_string(),
+                note: note_str.clone(),
+            }
+        )
+    }).collect();
+    for (key, callback) in &category_tuples {
+        map.insert(key.clone(), callback.clone());
+    }
+    let keyboard = category_tuples
         .chunks(2)
         .map(|chunk| {
             chunk
                 .iter()
-                .map(|category| {
-                    let note_str = note.clone().unwrap_or_default();
-                    let callback_data = format!("category:{}:{}:{}", category, amount, note_str);
-                    InlineKeyboardButton::callback(category.to_string(), callback_data)
+                .map(|(key, callback)| {  // Destructure the tuple here
+                    InlineKeyboardButton::callback(
+                        callback.category.clone(),
+                        key.clone()
+                    )
                 })
                 .collect::<Vec<InlineKeyboardButton>>()
         })
         .collect::<Vec<Vec<InlineKeyboardButton>>>();
+
 
     let markup = InlineKeyboardMarkup::new(keyboard);
     bot.send_message(msg.chat.id, "Choose a category")
@@ -289,29 +323,22 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
         bot.answer_callback_query(&q.id).await?;
         log::debug!("Query data: {}", callback_data);
 
-        let parts: Vec<&str> = callback_data.split(":").collect();
 
-        if parts.len() < 3 || parts[0] != "category" {
-            edit_bot_message(&bot, &q, String::from("⛔ Could not parse the response")).await?;
-            return Ok(());
-        }
+        let mut map = bot_state.categories_hash.lock().await;
 
-        let category = parts[1].to_string();
-
-        let amount_cents = match parts[2].parse::<f32>() {
-            Ok(num) => (num * 100.0).round() as i64,
-            Err(_) => {
-                edit_bot_message(&bot, &q, String::from("⛔ Could not parse amount")).await?;
-                return Ok(());
+        let category_data = match map.remove(callback_data) { 
+            Some(data) => data,
+            None => {
+                edit_bot_message(&bot, &q, "⛔ Invalid or expired selection".into()).await?;
+                return Ok(())
             }
         };
 
-        let note = if parts.len() > 3 {
-            Some(parts[3..].join(":"))
-        } else {
-            None
-        };
+        map.retain(|_, entry| entry.menu_id != category_data.menu_id);
 
+        let amount_cents = (category_data.amount * 100.0).round() as i64;
+        let category = category_data.category;
+        let note =category_data.note;
         let username = q.from.username.clone().unwrap_or("unknown".into());
         let utc = Utc::now();
 
@@ -322,7 +349,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: Arc<BotState>) 
                 amount: amount_cents,
                 category: category.clone(),
                 username: username.clone(),
-                note: note.clone(),
+                note: Option::from(note.clone()),
             },
         )
         .await
