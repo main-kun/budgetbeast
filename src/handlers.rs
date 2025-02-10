@@ -10,8 +10,10 @@ use uuid::Uuid;
 use crate::{state, utils, db, sheets, ChannelCommand, BotCommand};
 use crate::db::{add_transaction, Transaction};
 use crate::md::escape_markdown;
+use crate::state::SharedBotState;
+use crate::utils::cents_to_full;
 
-async fn push_to_sheets(bot_state: state::SharedBotState) -> anyhow::Result<()> {
+async fn push_to_sheets(bot_state: SharedBotState) -> anyhow::Result<()> {
     let unsynced_rows = db::get_unsynced(&bot_state.sqlite_pool).await?;
 
     if unsynced_rows.is_empty() {
@@ -246,6 +248,9 @@ pub async fn answer(bot: Bot, msg: Message, me: Me, bot_state: state::SharedBotS
             Ok(BotCommand::Add(command_value)) => {
                 add_command(bot, msg.clone(), command_value, bot_state).await?;
             }
+            Ok(BotCommand::Week) => {
+                weekly_summary(bot,msg.clone(), bot_state).await?;
+            }
             Err(_) => {
                 let tokens: Vec<&str> = text.split_whitespace().collect();
                 match tokens[0].parse::<f64>() {
@@ -257,6 +262,20 @@ pub async fn answer(bot: Bot, msg: Message, me: Me, bot_state: state::SharedBotS
                     }
                 };
             }
+        }
+    }
+    Ok(())
+}
+
+async fn weekly_summary(bot: Bot, msg: Message, bot_state: SharedBotState) -> anyhow::Result<()> {
+    match db::get_weekly_summary(&bot_state.sqlite_pool).await {
+        Ok(value) => {
+            let response = format!("{} RSD", cents_to_full(value));
+            bot.send_message(msg.chat.id, response).await?;
+        }
+        Err(err) => {
+            log::error!("Failed to retrieve weekly summary: {}", err);  
+            bot.send_message(msg.chat.id, "Failed to retrieve weekly summary.").await?;
         }
     }
     Ok(())

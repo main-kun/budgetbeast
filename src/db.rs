@@ -82,3 +82,21 @@ pub async fn update_synced_at(
 
     Ok(())
 }
+
+
+pub async fn get_weekly_summary(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT
+            COALESCE(SUM(amount), 0) AS "sum: i64"
+        FROM transactions
+        WHERE date(date_created) >= date(
+            'now',
+            'start of day',
+            '-' || ((strftime('%w', 'now') + 6) % 7) || ' days'
+            )
+        "#
+    )
+    .fetch_one(pool)
+    .await
+}

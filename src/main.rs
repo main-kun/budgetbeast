@@ -26,6 +26,8 @@ const CONFIG_NAME: &str = "config.yaml";
 enum BotCommand {
     #[command(description = "Add transaction")]
     Add(String),
+    #[command(description = "Get weekly summary")]
+    Week
 }
 
 enum ChannelCommand {
