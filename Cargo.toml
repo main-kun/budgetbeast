@@ -1,6 +1,6 @@
 [package]
 name = "budgetbeast"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 description = "A telegram bot for personal budget tracking"
 publish = false
