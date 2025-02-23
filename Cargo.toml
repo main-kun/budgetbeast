@@ -21,3 +21,4 @@ sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio", "chrono"] }
 tokio-retry = "0.3.0"
 url = "2.5.4"
 uuid = { version = "1.13.1", features = ["v4"] }
+openssl = { version = "0.10", features = ["vendored"] }
