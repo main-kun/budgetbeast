@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            COALESCE(SUM(amount), 0) AS \"sum: i64\"\n        FROM transactions\n        WHERE date(date_created) >= date(\n            'now',\n            'start of day',\n            '-' || ((strftime('%w', 'now') + 6) % 7) || ' days'\n            )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "sum: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9de2c9793b0ac579fa47249a8efd3a635ca9bad772bf3a06b2ba2f3119c52d01"
+}
