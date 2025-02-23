@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 
 pub struct Transaction {
-    pub date: String,
+    pub date: DateTime<Utc>,
     pub amount: i64,
     pub category: String,
     pub username: String,

@@ -7,13 +7,9 @@ use teloxide::utils::command::BotCommands;
 use tokio_retry::Retry;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use uuid::Uuid;
-use crate::{state, utils, db, sheets, ChannelCommand, BotCommand};
-use crate::db::{add_transaction, Transaction};
-use crate::md::escape_markdown;
-use crate::state::SharedBotState;
-use crate::utils::cents_to_full;
+use crate::{state, utils, db,md, sheets, ChannelCommand, BotCommand};
 
-async fn push_to_sheets(bot_state: SharedBotState) -> anyhow::Result<()> {
+async fn push_to_sheets(bot_state: state::SharedBotState) -> anyhow::Result<()> {
     let unsynced_rows = db::get_unsynced(&bot_state.sqlite_pool).await?;
 
     if unsynced_rows.is_empty() {
@@ -197,12 +193,11 @@ pub async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: state::Shar
         let category = category_data.category;
         let note =category_data.note;
         let username = q.from.username.clone().unwrap_or("unknown".into());
-        let utc = Utc::now();
 
-        match add_transaction(
+        match db::add_transaction(
             &bot_state.sqlite_pool,
-            Transaction {
-                date: utc.to_string(),
+            db::Transaction {
+                date: Utc::now(),
                 amount: amount_cents,
                 category: category.clone(),
                 username: username.clone(),
@@ -215,7 +210,7 @@ pub async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: state::Shar
                 let success_text = format!(
                     "✅ *Added transaction:*\n*Category:* {}\n*Amount:* {}\n",
                     category,
-                    escape_markdown(utils::cents_to_full(amount_cents).to_string())
+                    md::escape_markdown(utils::cents_to_full(amount_cents).to_string())
                 );
                 edit_bot_message(&bot, &q, success_text).await?;
 
@@ -267,10 +262,10 @@ pub async fn answer(bot: Bot, msg: Message, me: Me, bot_state: state::SharedBotS
     Ok(())
 }
 
-async fn weekly_summary(bot: Bot, msg: Message, bot_state: SharedBotState) -> anyhow::Result<()> {
+async fn weekly_summary(bot: Bot, msg: Message, bot_state: state::SharedBotState) -> anyhow::Result<()> {
     match db::get_weekly_summary(&bot_state.sqlite_pool).await {
         Ok(value) => {
-            let response = format!("{} RSD", cents_to_full(value));
+            let response = format!("{} RSD", utils::cents_to_full(value));
             bot.send_message(msg.chat.id, response).await?;
         }
         Err(err) => {

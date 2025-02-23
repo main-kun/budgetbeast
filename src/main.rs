@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use crate::sheets::{create_sheets_client};
 use sqlx::sqlite::SqlitePool;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -8,8 +7,6 @@ use teloxide::{prelude::*, update_listeners::webhooks, utils::command::BotComman
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use url::Url;
-use crate::config::load_config;
-use crate::handlers::cleanup_expired_callbacks;
 
 mod db;
 mod md;
@@ -43,7 +40,7 @@ async fn main() {
 
     let (tx, mut rx) = mpsc::channel::<ChannelCommand>(32);
 
-    let settings = match load_config(config_path)
+    let settings = match config::load_config(config_path)
     {
         Ok(settings) => settings,
         Err(e) => {
@@ -54,7 +51,7 @@ async fn main() {
 
     let bot = Bot::new(&settings.bot_token);
 
-    let sheets = match create_sheets_client(&settings.service_account_key).await {
+    let sheets = match sheets::create_sheets_client(&settings.service_account_key).await {
         Ok(client) => client,
         Err(e) => {
             eprintln!("Failed to create sheets client: {}", e);
@@ -98,7 +95,7 @@ async fn main() {
 
     let state_for_cleanup = state.clone();
     
-    tokio::spawn(cleanup_expired_callbacks(state_for_cleanup, hash_items_ttl, refresh_duration));
+    tokio::spawn(handlers::cleanup_expired_callbacks(state_for_cleanup, hash_items_ttl, refresh_duration));
 
     log::info!("Budgetbeast initialized");
 

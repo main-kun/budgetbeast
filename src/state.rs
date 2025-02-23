@@ -1,5 +1,4 @@
-use crate::{config, ChannelCommand};
-use crate::sheets::SheetsClient;
+use crate::{config, sheets, ChannelCommand};
 use google_sheets4::api::Sheets;
 use sqlx::sqlite::SqlitePool;
 use std::collections::HashMap;
@@ -17,7 +16,7 @@ pub struct CategoryCallback {
 }
 
 pub struct BotState {
-    pub sheets: Sheets<SheetsClient>,
+    pub sheets: Sheets<sheets::SheetsClient>,
     pub settings: config::Settings,
     pub sqlite_pool: SqlitePool,
     pub tx: tokio::sync::mpsc::Sender<ChannelCommand>,
