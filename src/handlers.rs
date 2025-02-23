@@ -218,7 +218,8 @@ pub async fn callback_handler(bot: Bot, q: CallbackQuery, bot_state: state::Shar
                     log::error!("Failed to send sync command: {}", e);
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                log::error!("Failed to add transaction to db: {}", e);
                 edit_bot_message(&bot, &q, String::from("⛔ Could not save the transaction"))
                     .await?;
                 return Ok(());
