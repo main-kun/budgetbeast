@@ -1,18 +1,16 @@
-use std::collections::HashMap;
 use sqlx::sqlite::SqlitePool;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use teloxide::dispatching::Dispatcher;
 use teloxide::{prelude::*, update_listeners::webhooks, utils::command::BotCommands};
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use url::Url;
 
-mod db;
-mod md;
-mod sheets;
 mod config;
+mod db;
 mod handlers;
+mod md;
 mod state;
 mod utils;
 
@@ -24,11 +22,7 @@ enum BotCommand {
     #[command(description = "Add transaction")]
     Add(String),
     #[command(description = "Get weekly summary")]
-    Week
-}
-
-enum ChannelCommand {
-    Sync,
+    Week,
 }
 
 #[tokio::main]
@@ -38,10 +32,7 @@ async fn main() {
     let exec_dir = exec_path.parent().unwrap();
     let config_path = exec_dir.join(CONFIG_NAME);
 
-    let (tx, mut rx) = mpsc::channel::<ChannelCommand>(32);
-
-    let settings = match config::load_config(config_path)
-    {
+    let settings = match config::load_config(config_path) {
         Ok(settings) => settings,
         Err(e) => {
             eprintln!("Failed to load bot settings: {}", e);
@@ -50,14 +41,6 @@ async fn main() {
     };
 
     let bot = Bot::new(&settings.bot_token);
-
-    let sheets = match sheets::create_sheets_client(&settings.service_account_key).await {
-        Ok(client) => client,
-        Err(e) => {
-            eprintln!("Failed to create sheets client: {}", e);
-            std::process::exit(1);
-        }
-    };
 
     let sqlite_pool = match SqlitePool::connect(&settings.sqlite_path).await {
         Ok(pool) => pool,
@@ -68,34 +51,21 @@ async fn main() {
     };
 
     let state = Arc::new(state::BotState {
-        sheets,
         settings,
         sqlite_pool,
-        tx,
         categories_hash: Mutex::new(HashMap::new()),
     });
-
-    let state_for_channel = state.clone();
-
-    tokio::spawn(async move {
-        while let Some(cmd) = rx.recv().await {
-            match cmd {
-                ChannelCommand::Sync => {
-                    if let Err(e) = handlers::handle_sync_message(state_for_channel.clone()).await {
-                        log::error!("Failed to sync transaction: {}", e);
-                    }
-                }
-            }
-        }
-    });
-
 
     let hash_items_ttl = std::time::Duration::from_secs(300);
     let refresh_duration = std::time::Duration::from_secs(60);
 
     let state_for_cleanup = state.clone();
-    
-    tokio::spawn(handlers::cleanup_expired_callbacks(state_for_cleanup, hash_items_ttl, refresh_duration));
+
+    tokio::spawn(handlers::cleanup_expired_callbacks(
+        state_for_cleanup,
+        hash_items_ttl,
+        refresh_duration,
+    ));
 
     log::info!("Budgetbeast initialized");
 
@@ -125,6 +95,3 @@ async fn main() {
         None => dispatcher.dispatch().await,
     }
 }
-
-
-
